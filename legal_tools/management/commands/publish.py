@@ -3,6 +3,7 @@ import logging
 import os
 import socket
 from argparse import SUPPRESS, ArgumentParser
+from copy import copy
 from multiprocessing import Pool
 from pathlib import Path
 from pprint import pprint
@@ -16,7 +17,10 @@ from django.urls import reverse
 
 # First-party/Local
 from i18n import DEFAULT_CSV_FILE
-from i18n.utils import write_transstats_csv
+from i18n.utils import (
+    get_default_language_for_jurisdiction_deed,
+    write_transstats_csv,
+)
 from legal_tools.git_utils import commit_and_push_changes, setup_local_branch
 from legal_tools.models import LegalCode, TranslationBranch, build_path
 from legal_tools.utils import (
@@ -25,7 +29,9 @@ from legal_tools.utils import (
     save_bytes_to_file,
     save_redirect,
     save_url_as_static_file,
+    update_title,
 )
+from legal_tools.views import render_redirect
 
 ALL_TRANSLATION_BRANCHES = "###all###"
 LOG = logging.getLogger(__name__)
@@ -77,39 +83,48 @@ def save_list(output_dir, category, language_code):
     )
 
 
-def save_deed(output_dir, tool, language_code):
+def save_deed(output_dir, tool, language_code, opt_apache_only):
     # Function is at top level of module so that it can be pickled by
     # multiprocessing.
-    relpath, symlinks = tool.get_publish_files(language_code)
-    save_url_as_static_file(
-        output_dir,
-        url=build_path(tool.base_url, "deed", language_code),
-        relpath=relpath,
-    )
-    for symlink in symlinks:
-        wrap_relative_symlink(output_dir, relpath, symlink)
+    if not opt_apache_only:
+        relpath, symlinks = tool.get_publish_files(language_code)
+        save_url_as_static_file(
+            output_dir,
+            url=build_path(tool.base_url, "deed", language_code),
+            relpath=relpath,
+        )
+        for symlink in symlinks:
+            wrap_relative_symlink(output_dir, relpath, symlink)
     return tool.get_redirect_pairs(language_code)
 
 
-def save_legal_code(output_dir, legal_code):
+def save_legal_code(output_dir, legal_code, opt_apache_only):
     # Function is at top level of module so that it can be pickled by
     # multiprocessing.
-    (
-        relpath,
-        symlinks,
-        redirects_data,
-    ) = legal_code.get_publish_files()
-    if relpath:
-        # Deed-only tools will not return a legal code relpath
-        save_url_as_static_file(
-            output_dir,
-            url=legal_code.legal_code_url,
-            relpath=relpath,
-        )
-    for symlink in symlinks:
-        wrap_relative_symlink(output_dir, relpath, symlink)
-    for redirect_data in redirects_data:
-        save_redirect(output_dir, redirect_data)
+    if not opt_apache_only:
+        (
+            relpath,
+            symlinks,
+            redirects_data,
+        ) = legal_code.get_publish_files()
+        if relpath:
+            # Deed-only tools will not return a legal code relpath
+            save_url_as_static_file(
+                output_dir,
+                url=legal_code.legal_code_url,
+                relpath=relpath,
+            )
+        for symlink in symlinks:
+            wrap_relative_symlink(output_dir, relpath, symlink)
+        for redirect_data in redirects_data:
+            redirect_content = render_redirect(
+                title=redirect_data["title"],
+                destination=redirect_data["destination"],
+                language_code=redirect_data["language_code"],
+            )
+            save_redirect(
+                output_dir, redirect_data["redirect_file"], redirect_content
+            )
     return legal_code.get_redirect_pairs()
 
 
@@ -218,9 +233,28 @@ class Command(BaseCommand):
             help="Only copy and distill RDF/XML files",
             dest="rdf_only",
         )
+        branch_args.add_argument(
+            "--apache",
+            "--apache-config-only",
+            action="store_true",
+            help="Only distill the Apache2 language redirects configuration",
+            dest="apache_only",
+        )
+
+    def check_titles(self):
+        LOG.info("Checking legal code titles")
+        log_level = copy(LOG.level)
+        LOG.setLevel(LOG_LEVELS[0])
+        results = update_title(options={"dryrun": True})
+        LOG.setLevel(log_level)
+        if results["records_requiring_update"] > 0:
+            raise CommandError(
+                "Legal code titles require an update. See the `update_title`"
+                " command."
+            )
 
     def purge_output_dir(self):
-        if self.options["rdf_only"]:
+        if self.options["apache_only"] or self.options["rdf_only"]:
             return
         output_dir = self.output_dir
         LOG.info(f"Purging output_dir: {output_dir}")
@@ -236,21 +270,21 @@ class Command(BaseCommand):
                 os.remove(item)
 
     def call_collectstatic(self):
-        if self.options["rdf_only"]:
+        if self.options["apache_only"] or self.options["rdf_only"]:
             return
         LOG.info("Collecting static files")
         call_command("collectstatic", interactive=False)
 
     def write_robots_txt(self):
         """Create robots.txt to discourage indexing."""
-        if self.options["rdf_only"]:
+        if self.options["apache_only"] or self.options["rdf_only"]:
             return
         LOG.info("Writing robots.txt")
         robots = "User-agent: *\nDisallow: /\n".encode("utf-8")
         save_bytes_to_file(robots, os.path.join(self.output_dir, "robots.txt"))
 
     def copy_static_wp_content_files(self):
-        if self.options["rdf_only"]:
+        if self.options["apache_only"] or self.options["rdf_only"]:
             return
         hostname = socket.gethostname()
         output_dir = self.output_dir
@@ -267,7 +301,7 @@ class Command(BaseCommand):
         copytree(source, destination)
 
     def copy_static_cc_legal_tools_files(self):
-        if self.options["rdf_only"]:
+        if self.options["apache_only"] or self.options["rdf_only"]:
             return
         hostname = socket.gethostname()
         output_dir = self.output_dir
@@ -284,6 +318,8 @@ class Command(BaseCommand):
         copytree(source, destination)
 
     def copy_static_rdf_files(self):
+        if self.options["apache_only"]:
+            return
         hostname = socket.gethostname()
         output_dir = self.output_dir
         LOG.info("Copying static RDF/XML files")
@@ -296,12 +332,14 @@ class Command(BaseCommand):
             path,
         )
         destination = os.path.join(output_dir, path)
-        copytree(source, destination)
+        copytree(source, destination, dirs_exist_ok=True)
 
     def distill_and_symlink_rdf_meta(self):
         """
         Generate the index.rdf, images.rdf and copies the rest.
         """
+        if self.options["apache_only"]:
+            return
         hostname = socket.gethostname()
         output_dir = self.output_dir
         dest_dir = os.path.join(output_dir, "rdf")
@@ -338,7 +376,7 @@ class Command(BaseCommand):
             LOG.debug(f"   ^{symlink}")
 
     def copy_legal_code_plaintext(self):
-        if self.options["rdf_only"]:
+        if self.options["apache_only"] or self.options["rdf_only"]:
             return
         hostname = socket.gethostname()
         legacy_dir = self.legacy_dir
@@ -371,7 +409,7 @@ class Command(BaseCommand):
             LOG.debug(f"    {relative_name}")
 
     def distill_dev_index(self):
-        if self.options["rdf_only"]:
+        if self.options["apache_only"] or self.options["rdf_only"]:
             return
         hostname = socket.gethostname()
         output_dir = self.output_dir
@@ -385,7 +423,7 @@ class Command(BaseCommand):
         )
 
     def distill_lists(self):
-        if self.options["rdf_only"]:
+        if self.options["apache_only"] or self.options["rdf_only"]:
             return
         hostname = socket.gethostname()
         output_dir = self.output_dir
@@ -411,6 +449,7 @@ class Command(BaseCommand):
         output_dir = self.output_dir
         legal_codes = LegalCode.objects.validgroups()
         redirect_pairs_data = []
+        default_languages_deeds = {}
         for group in legal_codes.keys():
             tools = set()
             LOG.debug(f"{hostname}:{output_dir}")
@@ -426,11 +465,31 @@ class Command(BaseCommand):
             rdf_arguments = []
             for legal_code in legal_codes[group]:
                 tools.add(legal_code.tool)
-                legal_code_arguments.append((output_dir, legal_code))
+                legal_code_arguments.append(
+                    (output_dir, legal_code, self.options["apache_only"])
+                )
             for tool in tools:
                 for language_code in settings.LANGUAGES_MOSTLY_TRANSLATED:
-                    deed_arguments.append((output_dir, tool, language_code))
+                    deed_arguments.append(
+                        (
+                            output_dir,
+                            tool,
+                            language_code,
+                            self.options["apache_only"],
+                        )
+                    )
                 rdf_arguments.append((output_dir, tool))
+                if (
+                    tool.jurisdiction_code
+                    and tool.jurisdiction_code not in default_languages_deeds
+                ):
+                    if tool.version not in default_languages_deeds:
+                        default_languages_deeds[tool.version] = {}
+                    default_languages_deeds[tool.version][
+                        tool.jurisdiction_code
+                    ] = get_default_language_for_jurisdiction_deed(
+                        tool.jurisdiction_code,
+                    )
 
             if not self.options["rdf_only"]:
                 redirect_pairs_data += self.pool.starmap(
@@ -439,52 +498,122 @@ class Command(BaseCommand):
                 redirect_pairs_data += self.pool.starmap(
                     save_legal_code, legal_code_arguments
                 )
-            self.pool.starmap(save_rdf, rdf_arguments)
+            if not self.options["apache_only"]:
+                self.pool.starmap(save_rdf, rdf_arguments)
 
         if self.options["rdf_only"]:
             return
         LOG.info("Writing Apache2 redirects configuration")
-        redirect_pairs = []
-        for pair_list in redirect_pairs_data:
-            redirect_pairs += pair_list
-        del redirect_pairs_data
-        widths = [max(map(len, map(str, col))) for col in zip(*redirect_pairs)]
-        redirect_lines = []
-        for pair in redirect_pairs:
-            pcre_match = f'"^{pair[0]}$"'
-            pad = widths[0] + 2
-            redirect_lines.append(
-                f'RedirectMatch  301  {pcre_match.ljust(pad)}  "{pair[1]}"'
-            )
-        del redirect_pairs
-        redirect_lines.sort(reverse=True)
         include_lines = [
             "# DO NOT EDIT MANUALLY",
             "#",
             "# This file was generated by the publish command.",
             "# https://github.com/creativecommons/cc-legal-tools-app",
             "#",
-            "# It should be included from within an Apache2 httpd site config",
-            "#",
-            "# https://httpd.apache.org/docs/2.4/mod/mod_alias.html",
-            "# https://httpd.apache.org/docs/2.4/mod/mod_rewrite.html",
-            "",
-            "########################################",
-            "# Step 1: Redirect mixed/uppercase to lowercase",
-            "#",
-            "# Must be set within virtual host context:",
-            "RewriteMap lowercase int:tolower",
-            "RewriteCond %{REQUEST_URI} ^/(licenses|publicdomain)",
-            "RewriteCond $1 [A-Z]",
-            "RewriteRule ^/?(.*)$ /${lowercase:$1} [R=301,L]",
-            "",
-            "########################################",
-            "#Step 2: Redirect alternate language codes to supported Django"
-            " language codes",
+            "# See related Apache2 httpd documentation:",
+            "# - https://httpd.apache.org/docs/2.4/mod/mod_alias.html",
+            "# - https://httpd.apache.org/docs/2.4/mod/mod_rewrite.html",
             "",
         ]
+
+        # Step 1: Language redirects
+        include_lines += [
+            "#" * 79,
+            "# Step 1: Langauge redirects",
+            "#       - Redirect alternate language codes to supported Django"
+            " language codes",
+            "#       - Redirect legacy bug URLs to valid URLs",
+            "",
+        ]
+        redirect_pairs = []
+        for pair_list in redirect_pairs_data:
+            redirect_pairs += pair_list
+        del redirect_pairs_data
+        # Add RedirectMatch for ccEngine bug URLs. Entries are added for each
+        # of the 4.0 licenses (versus only two regex) to increase readability.
+        # https://github.com/creativecommons/cc-legal-tools-app/issues/438
+        for unit in ("by", "by-nc", "by-nc-nd", "by-nc-sa", "by-nd", "by-sa"):
+            # deed
+            redirect_pairs.append(
+                [
+                    f"/licenses/{unit}/4[.]0/([^/]+)/(deed|deed[.]html)?",
+                    f"/licenses/{unit}/4.0/deed.$1",
+                ]
+            )
+            # legalcode
+            redirect_pairs.append(
+                [
+                    f"/licenses/{unit}/4[.]0/([^/]+)/legalcode(?:[.]html)?",
+                    f"/licenses/{unit}/4.0/legalcode.$1",
+                ]
+            )
+        widths = [max(map(len, map(str, col))) for col in zip(*redirect_pairs)]
+        pad = widths[0] + 2
+        redirect_lines = []
+        for pair in redirect_pairs:
+            pcre_match = f'"^{pair[0]}$"'
+            redirect_lines.append(
+                f'RedirectMatch  301  {pcre_match.ljust(pad)}  "{pair[1]}"'
+            )
+        del redirect_pairs
+        redirect_lines.sort(reverse=True)
         include_lines += redirect_lines
         del redirect_lines
+
+        # Step 2: Redirect absent deed translations for ported licenses
+        # https://github.com/creativecommons/cc-legal-tools-app/issues/236
+        step2_lines = [
+            "",
+            "#" * 79,
+            "# Step 2: Redirect absent deed translations for ported licenses",
+            "# https://github.com/creativecommons/cc-legal-tools-app/issues/"
+            "236",
+            "",
+        ]
+        for ver in sorted(default_languages_deeds.keys()):
+            for jur in sorted(default_languages_deeds[ver].keys()):
+                default_lang = default_languages_deeds[ver][jur]
+                step2_lines += [
+                    "RewriteCond %{REQUEST_FILENAME} !-f",
+                    "RewriteCond %{REQUEST_FILENAME}.html !-f",
+                    "RewriteCond %{REQUEST_FILENAME} !-l",
+                    "RewriteCond %{REQUEST_FILENAME}.html !-l",
+                    f"RewriteRule licenses/([a-z+-]+)/{ver}/{jur}/deed[.].*$"
+                    f" /licenses/$1/{ver}/{jur}/deed.{default_lang} [R=301,L]",
+                ]
+        include_lines += step2_lines
+        del step2_lines
+
+        # Step 3: Redirect absent deed translations for international/universal
+        #         licenses:
+        # https://github.com/creativecommons/cc-legal-tools-app/issues/236
+        step3_lines = [
+            "",
+            "#" * 79,
+            "# Step 3: Redirect absent deed translations for international/"
+            "universal",
+            "#         licenses",
+            "# https://github.com/creativecommons/cc-legal-tools-app/issues/"
+            "236",
+            "",
+            "RewriteCond %{REQUEST_FILENAME} !-f",
+            "RewriteCond %{REQUEST_FILENAME}.html !-f",
+            "RewriteCond %{REQUEST_FILENAME} !-l",
+            "RewriteCond %{REQUEST_FILENAME}.html !-l",
+            "RewriteRule licenses/([a-z-]+)/2.1/deed[.].*$"
+            " /licenses/$1/2.0/deed.en [R=301,L]",
+            "",
+            "RewriteCond %{REQUEST_FILENAME} !-f",
+            "RewriteCond %{REQUEST_FILENAME}.html !-f",
+            "RewriteCond %{REQUEST_FILENAME} !-l",
+            "RewriteCond %{REQUEST_FILENAME}.html !-l",
+            "RewriteRule licenses/([a-z+-]+)/([0-9.]+)/deed[.].*$"
+            " /licenses/$1/$2/deed.en [R=301,L]",
+            "",
+        ]
+        include_lines += step3_lines
+        del step3_lines
+
         include_lines.append("# vim: ft=apache ts=4 sw=4 sts=4 sr noet")
         include_lines.append("")
         include_lines = "\n".join(include_lines).encode("utf-8")
@@ -532,6 +661,7 @@ class Command(BaseCommand):
         )
 
     def distill_and_copy(self):
+        self.check_titles()
         self.purge_output_dir()
         self.call_collectstatic()
         self.write_robots_txt()
@@ -560,7 +690,6 @@ class Command(BaseCommand):
                 self.distill_and_copy()
                 if repo.is_dirty(untracked_files=True):
                     # Add any changes and new files
-
                     commit_and_push_changes(
                         repo,
                         "Update static files generated by cc-legal-tools-app",

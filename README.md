@@ -8,8 +8,7 @@ repository.
 
 [repodata]:https://github.com/creativecommons/cc-legal-tools-data
 
-
-## Code of conduct
+## Code of Conduct
 
 [`CODE_OF_CONDUCT.md`][org-coc]:
 > The Creative Commons team is committed to fostering a welcoming community.
@@ -23,81 +22,101 @@ repository.
 [reporting_guide]: https://opensource.creativecommons.org/community/code-of-conduct/enforcement/
 
 
-## Contributing
+## About
 
-See [`CONTRIBUTING.md`][org-contrib].
+This application manages 639 legal tools (636 licenses and 3 public domain
+tools). The current version of the licenses is 4.0 and includes 6 licenses.
+They are international and are designed to operate globally, ensuring they are
+robust, enforceable and easily adopted worldwide. Prior versions were adapted
+to specific jurisdictions ("ported"). That is why there are 636 licenses.
 
-[org-contrib]: https://github.com/creativecommons/.github/blob/main/CONTRIBUTING.md
+Broadly speaking, each legal tool consists of three layers:
+1. `deed`: a plain language summary of the legal tool
+2. `legalcode`: the legal tool itself
+3. `rdf`: metadata about the legal tool in RDF/XML format
+
+With translations of the deed and translations of the legal code, this
+application manages over 30,000 documents.
 
 
-## Not the live site
+### Not the live site
 
 This project is not intended to serve the legal tools directly. Instead, a
 command line tool can be used to save all the rendered HTML and RDF/XML pages
-as files.  Then those files are used as part of the real CreativeCommons.org
+as files. Then those files are used as part of the CreativeCommons.org
 site (served as static files).
 
 
-## Software Versions
+## Setup and Usage
 
-- [Python 3.10][python310] specified in:
-  - [`.github/workflows/django-app-coverage.yml`][django-app-coverage]
-  - [`.github/workflows/static-analysis.yml`][static-analysis]
-  - [`.pre-commit-config.yaml`](.pre-commit-config.yaml)
-  - [`Dockerfile`](Dockerfile)
-  - [`Pipfile`](Pipfile)
-  - [`pyproject.toml`](pyproject.toml)
-- [Django 3.2 (LTS)][django32]
-  - [`Pipfile`](Pipfile)
+Once this project's required dependencies (Docker, Git, etc.) are enabled on
+your system, you will be able to run the legal-tools application and generate
+static files.
 
-[django-app-coverage]: .github/workflows/django-app-coverage.yml
-[static-analysis]: .github/workflows/static-analysis.yml
-[python310]: https://docs.python.org/3.10/
-[django32]: https://docs.djangoproject.com/en/3.2/
+For information on learning and installing the prerequisite technologies for
+this project, please see [Foundational technologies — Creative Commons Open
+Source][found-tech].
+
+[found-tech]: https://opensource.creativecommons.org/contributing-code/foundational-tech/
 
 
-## Setting up the Project
+### Codebases Setup
 
-
-### Data Repository
-
-Visit [Cloning a Repository][gitclone] on how to clone a GitHub repository.
-
-The [creativecommons/cc-legal-tools-data][repodata] project repository should
-be cloned into a directory adjacent to this one:
+Both this repository and the [creativecommons/cc-legal-tools-data][repodata]
+project repository should be cloned side by side, resulting in a structure like
+the following:
 ```
-PARENT_DIR
-├── cc-legal-tools-app     (git clone of this repository)
-└── cc-legal-tools-data    (git clone of the cc-legal-tools-data repository)
+creative-commons/
+├── cc-legal-tools-app/     (git clone of this repository)
+└── cc-legal-tools-data/    (git clone of the cc-legal-tools-data repository)
 ```
 
-If it is not cloned into the default location, the Django
-`DATA_REPOSITORY_DIR` Django configuration setting, or the
-`DATA_REPOSITORY_DIR` environment variable can be used to configure its
-location.
+To achieve this, we recommend the following procedure:
+
+1. Create and change to a container directory, such as `creative-commons` or `cc`.
+    ```shell
+    mkdir creative-commons
+    cd creative-commons
+    ```
+2. Clone both repos using SSH or, if that does not work, HTTPS protocol.
+    ```shell
+    git clone git@github.com:creativecommons/cc-legal-tools-app.git
+    git clone git@github.com:creativecommons/cc-legal-tools-data.git
+    ```
+    or
+    ```shell
+    git clone https://github.com/creativecommons/cc-legal-tools-app.git
+    git clone https://github.com/creativecommons/cc-legal-tools-data.git
+    ```
+
+Visit [Cloning a repository - GitHub Docs][gitclone] for more on how to clone a
+GitHub repository.
 
 [gitclone]:https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository
-[repodata]:https://github.com/creativecommons/cc-legal-tools-data
 
 
-### Docker Compose Setup
+### Docker Prep and Initial Execution
 
-Use the following instructions to start the project with Docker compose.
-Pleaes note that CC staff use macOS for development--please help us with
-documenting other operating systems if you encounter issues.
+Use the following instructions to prepare and run the project with Docker
+Compose.
 
-1. Ensure the [Data Repository](#data-repository), above, is in place
-2. [Install Docker Engine](https://docs.docker.com/engine/install/)
-3. Ensure you are at the top level of the directory where you cloned this repository (where `manage.py` is)
-4. Create Django local settings file
+1. Ensure all prerequisites and repositories are in place.
+2. Ensure you are at the top level of the directory where you cloned this
+repository (where `manage.py` is).
+    ```shell
+    cd cc-legal-tools-app
+    ```
+3. Create Django local settings file from the example file.
     ```shell
     cp cc_legal_tools/settings/local.example.py cc_legal_tools/settings/local.py
     ```
-5. Build the containers
+    - Update variables in new file, if necessary.
+    - This file is ignored by Git.
+4. Build the containers.
     ```shell
     docker compose build
     ```
-6. **Run the containers**
+5. **Run the containers.**
     ```shell
     docker compose up
     ```
@@ -107,187 +126,28 @@ documenting other operating systems if you encounter issues.
         transparently as long as the development server is running.
    2. **static** ([127.0.0.1:8006](http://127.0.0.1:8006/)): a static web
       server serving [creativecommons/cc-legal-tools-data][repodata]:`docs/`
-7. Run database migrations
+6. Initialize data.
+Open a separate terminal tab, and in the same directory, run:
     ```shell
-    docker compose exec app ./manage.py migrate
+    ./dev/init_data.sh
     ```
-8. Clear data in the database
-    ```shell
-    docker compose exec app ./manage.py clear_license_data
-    ```
-9. Load legacy HTML in the database
-    ```shell
-    docker compose exec app ./manage.py load_html_files
-    ```
+    1. Deletes database (which may not yet exist)
+    2. Initializes database
+    3. Performs database migrations
+    4. Creates supseruser (will prompt for password)
+    5. Loads data
 
-[repodata]:https://github.com/creativecommons/cc-legal-tools-data
+Note: Once this full setup is performed, running Step 5 above will execute the
+application on any subsequent occasion.
 
 
-### Manual Setup
+## Project Usage
 
-> :warning: **This section may be helpful for maintaining the project, but
-> should NOT be used for development. Please use the Docker Compose Setup,
-> above.**
-
-1. Development Environment
-   1. Ensure the [Data Repository](#data-repository), above, is in place
-   2. Install dependencies
-      - Linux:
-        ```shell
-        sudo apt-get install python3.9 python3.9-dev python3-pip
-        ```
-        ```shell
-        pip3 install pipenv
-        ```
-      - macOS: via [Homebrew](https://brew.sh/):
-        ```shell
-        brew install pipenv python@3.9
-        ```
-      - Windows: [install Python][python-windows] and then use `pip` to install
-        `pipenv`:
-        ```shell
-        pip install pipenv
-        ```
-   3. Install Python environment and modules via pipenv to create a
-      virtualenv
-      - Linux:
-        ```shell
-        pipenv install --dev --python /usr/bin/python3.9
-        ```
-      - macOS: via [Homebrew](https://brew.sh/):
-        ```shell
-        pipenv install --dev --python /usr/local/opt/python@3.9/libexec/bin/python
-        ```
-      - Windows:
-        ```shell
-        pipenv install --dev --python \User\Appdata\programs\python
-        ```
-   4. Install pre-commit hooks
-    ```shell
-    pipenv run pre-commit install
-    ```
-2. Configure Django
-   1. Create Django local settings file
-    ```shell
-    cp cc_legal_tools/settings/local.example.py cc_legal_tools/settings/local.py
-    ```
-   2. Create project database
-      - Linux:
-        ```shell
-        sudo createdb -E UTF-8 cc_legal_tools
-        ```
-      - macOS:
-        ```shell
-        createdb -E UTF-8 cc_legal_tools
-        ```
-      - Windows:
-        ```shell
-        createdb -E UTF-8 cc_legal_tools
-        ```
-   3. Load database schema
-    ```shell
-    pipenv run ./manage.py migrate
-    ```
-3. Run development server ([127.0.0.1:8005](http://127.0.0.1:8005/))
-    ```shell
-    pipenv run ./manage.py runserver
-    ```
-   - Any changes made to Python will be detected and rebuilt transparently as
-     long as the development server is running.
-
-[python-windows]:https://www.pythontutorial.net/getting-started/install-python/
+With the prerequisites installed and built, these tools can be used to generate
+and manage data from the associated [data repository][repodata].
 
 
-#### Manual Commands
-
-> :information_source: The rest of the documentation assumes Docker. If you are
-> using a manual setup, use `pipenv run` instead of `docker compose exec app`
-> for the commands below.
-
-
-### Tooling
-
-- **[Python Guidelines — Creative Commons Open Source][ccospyguide]**
-- [Black][black]: the uncompromising Python code formatter
-- [Coverage.py][coveragepy]: Code coverage measurement for Python
-- Docker
-  - [Dockerfile reference | Docker Documentation][dockerfile]
-  - [Compose file version 3 reference | Docker Documentation][compose3]
-- [flake8][flake8]: a python tool that glues together pep8, pyflakes, mccabe,
-  and third-party plugins to check the style and quality of some python code.
-- [isort][isort]: A Python utility / library to sort imports.
-- [pre-commit][precommit]: A framework for managing and maintaining
-  multi-language pre-commit hooks.
-
-[ccospyguide]: https://opensource.creativecommons.org/contributing-code/python-guidelines/
-[black]: https://github.com/psf/black
-[coveragepy]: https://github.com/nedbat/coveragepy
-[dockerfile]: https://docs.docker.com/engine/reference/builder/
-[compose3]: https://docs.docker.com/compose/compose-file/compose-file-v3/
-[flake8]: https://gitlab.com/pycqa/flake8
-[isort]: https://pycqa.github.io/isort/
-[precommit]: https://pre-commit.com/
-
-
-#### Helper Scripts
-
-Best run before every commit:
-- `./dev/coverage.sh` - Run coverage tests and report
-- `./dev/tools.sh` - Run Python code tools (isort, black, flake8)
-
-Run as needed:
-- `./dev/copy_theme.sh` - Copy the portions of
-  [creativecommons/vocabulary-theme][vocab-theme] needed for local development
-  - Run after each new release of
-    [creativecommons/vocabulary-theme][vocab-theme]
-
-Esoteric and dangerous:
-- `./dev/concatenatemessages.sh` - Concatenate legacy ccEngine translations
-  into cc-legal-tools-app
-  - rarely used (only after source strings are updated)
-- `./dev/resetdb.sh` - Reset Django application database data (!!DANGER!!)
-  - usually only helpful if you're doing model/schema work
-- `./dev/updatemessages.sh` - Run Django Management nofuzzy_makemessages with
-  helpful options (including excluding legalcode) and compilemessages
-
-[vocab-theme]: https://github.com/creativecommons/vocabulary-theme
-
-
-#### Coverage Tests and Report
-
-The coverage tests and report are run as part of pre-commit and as a GitHub
-Action. To run it manually:
-1. Ensure the [Data Repository](#data-repository), above, is in place
-2. Ensure [Docker Compose Setup](#docker-compose-setup), above, is complete
-2. Coverage test
-    ```shell
-    docker compose exec app coverage run manage.py test --noinput --keepdb
-    ```
-3. Coverage report
-    ```shell
-    docker compose exec app coverage report
-    ```
-
-
-### Commit Errors
-
-
-#### Error building trees
-
-If you encounter an `error: Error building trees` error from pre-commit when
-you commit, try adding your files (`git add <FILES>`) before committing them.
-
-
-## Frontend Dependencies
-
-The following CC projects are used to achieve a consistent look and feel:
-- [creativecommons/vocabulary-theme][vocabulary-theme]: WordPress Theme
-  implementation of the Vocabulary design system
-
-[vocabulary-theme]: https://github.com/creativecommons/vocabulary-theme
-
-
-## Data
+### Data
 
 The legal tools metadata is in a database. The metadata tracks which legal
 tools exist, their translations, their ports, and their characteristics like
@@ -336,191 +196,23 @@ Documentation:
 [namespace]: https://github.com/creativecommons/cc-legal-tools-data#legal-tools-namespace
 [unportedtemplate]: templates/includes/legalcode_licenses_3.0_unported.html
 [cctransifex]: https://www.transifex.com/creativecommons/public/
-[djangomodels]: https://docs.djangoproject.com/en/3.2/topics/db/models/
-[djangotemplates]: https://docs.djangoproject.com/en/3.2/topics/templates/
+[djangomodels]: https://docs.djangoproject.com/en/4.2/topics/db/models/
+[djangotemplates]: https://docs.djangoproject.com/en/4.2/topics/templates/
 
 
-## Importing the existing legal tool text
+### Translation
 
-The process of getting the text into the site varies by legal tool.
-
-Note that once the site is up and running in production, the data in the site
-will become the canonical source, and the process described here should not
-need to be repeated after that.
-
-The implementation is the Django management command `load_html_files`, which
-reads from the legacy HTML legal code files in the
-[creativecommons/cc-legal-tools-data][repodata] repository, and populates the
-database records and translation files.
-
-`load_html_files` uses [BeautifulSoup4][bs4docs] to parse the legacy HTML legal
-code:
-1. `import_zero_license_html()` for CC0 Public Domain tool
-   - HTML is handled specifically (using tag ids and classes) to populate
-     translation strings and to be used with specific HTML formatting when
-     displayed via template
-2. `import_by_40_license_html()` for 4.0 License tools
-   - HTML is handled specifically (using tag ids and classes) to populate
-     translation strings and to be used with specific HTML formatting when
-     displayed via a template
-3. `import_by_30_unported_license_html()` for unported 3.0 License tools
-   (English-only)
-   - HTML is handled specifically to be used with specific HTML formatting
-     when displayed via a template
-4. `simple_import_license_html()` for everything else
-   - HTML is handled generically; only the title and license body are
-     identified. The body is stored in the `html` field of the
-     `LegalCode` model
-
-[bs4docs]: https://www.crummy.com/software/BeautifulSoup/bs4/doc/
-[repodata]: https://github.com/creativecommons/cc-legal-tools-data
+See [`docs/translation.md`](docs/translation.md)
 
 
-### Import Process
-
-This process will read the HTML files from the specified directory, populate
-`LegalCode` and `Tool` models, and create the `.po` portable object Gettext
-files in [creativecommons/cc-legal-tools-data][repodata].
-
-1. Ensure the [Data Repository](#data-repository), above, is in place
-2. Ensure [Docker Compose Setup](#docker-compose-setup), above, is complete
-3. Clear data in the database
-    ```shell
-    docker compose exec app ./manage.py clear_license_data
-    ```
-4. Load legacy HTML in the database
-    ```shell
-    docker compose exec app ./manage.py load_html_files
-    ```
-5. Optionally (and only as appropriate):
-   1. Commit the `.po` portable object Gettext file changes in
-      [creativecommons/cc-legal-tools-data][repodata]
-   2. [Translation Update Process](#translation-update-process), below
-   3. [Generate Static Files](#generate-static-files), below
-
-[repodata]:https://github.com/creativecommons/cc-legal-tools-data
-
-
-### Import Dependency Documentation
-
-- [Beautiful Soup Documentation — Beautiful Soup 4 documentation][bs4docs]
-  - [lxml - Processing XML and HTML with Python][lxml]
-- [Quick start guide — polib documentation][polibdocs]
-
-[bs4docs]: https://www.crummy.com/software/BeautifulSoup/bs4/doc/
-[lxml]: https://lxml.de/
-[polibdocs]: https://polib.readthedocs.io/en/latest/quickstart.html
-
-
-## Translation
-
-To upload/download translation files to/from Transifex, you'll need an account
-there with access to these translations. Then follow the [Authentication -
-Transifex API v3][transauth]: to get an API token, and set
-`TRANSIFEX["API_TOKEN"]` in your environment with its value.
-
-The [creativecommons/cc-legal-tools-data][repodata] repository must be cloned
-next to this `cc-legal-tools-app` repository. (It can be elsewhere, then you
-need to set `DATA_REPOSITORY_DIR` to its location.) Be sure to clone using a
-URL that starts with `git@github...` and not `https://github...`, or you won't
-be able to push to it. Also see [Data Repository](#data-repository), above.
-
-In production, the `check_for_translation_updates` management command should be
-run hourly. See [Check for Translation
-Updates](#check-for-translation-updates), below.
-
-Also see [Publishing changes to git repo](#publishing-changes-to-git-repo),
-below.
-
-[Babel][babel] is used for localization information.
-
-Documentation:
-- [Babel — Babel documentation][babel]
-- [Translation | Django documentation | Django][djangotranslation]
-
-[babel]: http://babel.pocoo.org/en/latest/index.html
-[repodata]:https://github.com/creativecommons/cc-legal-tools-data
-[transauth]: https://transifex.github.io/openapi/index.html#section/Authentication
-
-
-### How the tool translation is implemented
-
-Django Translation uses two sets of Gettext Files in the
-[creativecommons/cc-legal-tools-data][repodata] repository (the [Data
-Repository](#data-repository), above). See that repository for detailed
-information and definitions.
-
-Documentation:
-- [Translation | Django documentation | Django][djangotranslation]
-- Transifex API
-  - [Introduction to API 3.0 | Transifex Documentation][api30intro]
-  - [Transifex API v3][api30]
-  - Python SDK: [transifex-python/transifex/api][apisdk]
-
-[api30]: https://transifex.github.io/openapi/index.html#section/Introduction
-[api30intro]: https://docs.transifex.com/api-3-0/introduction-to-api-3-0
-[apisdk]: https://github.com/transifex/transifex-python/tree/devel/transifex/api
-[djangotranslation]: https://docs.djangoproject.com/en/3.2/topics/i18n/translation/
-[repodata]: https://github.com/creativecommons/cc-legal-tools-data
-
-
-### Check for Translation Updates
-
-> :warning: **This functionality is currently disabled.**
-
-The hourly run of `check_for_translation_updates` looks to see if any of the
-translation files in Transifex have newer last modification times than we know
-about. It performs the following process (which can also be done manually:
-
-1. Ensure the [Data Repository](#data-repository), above, is in place
-2. Within the [creativecommons/cc-legal-tools-data][repodata] (the [Data
-   Repository](#data-repository)):
-   1. Checkout or create the appropriate branch.
-      - For example, if a French translation file for BY 4.0 has changed, the
-        branch name will be `cc4-fr`.
-   2. Download the updated `.po` portable object Gettext file from Transifex
-   3. Do the [Translation Update Process](#translation-update-process) (below)
-      - _This is important and easy to forget,_ but without it, Django will
-        keep using the old translations
-   4. Commit that change and push it upstream.
-3. Within this `cc-legal-tools-app` repository:
-   1. For each branch that has been updated, [Generate Static
-      Files](#generate-static-files) (below). Use the options to update git and
-      push the changes.
-
-[repodata]:https://github.com/creativecommons/cc-legal-tools-data
-
-
-### Check for Translation Updates Dependency Documentation
-
-- [GitPython Documentation — GitPython documentation][gitpythondocs]
-- [Requests: HTTP for Humans™ — Requests documentation][requestsdocs]
-
-[gitpythondocs]: https://gitpython.readthedocs.io/en/stable/index.html
-[requestsdocs]: https://docs.python-requests.org/en/master/
-
-
-### Translation Update Process
-
-This Django Admin command must be run any time the `.po` portable object
-Gettext files are created or changed.
-
-1. Ensure the [Data Repository](#data-repository), above, is in place
-2. Ensure [Docker Compose Setup](#docker-compose-setup), above, is complete
-3. Compile translation messages (update the `.mo` machine object Gettext files)
-    ```shell
-    docker compose exec app ./manage.py compilemessages
-    ```
-
-
-## Generate Static Files
+### Generate Static Files
 
 Generating static files updates the static files in the `docs/` directory of
 the [creativecommons/cc-legal-tools-data][repodata] repository (the [Data
 Repository](#data-repository), above).
 
 
-### Static Files Process
+#### Static Files Process
 
 This process will write the HTML files in the cc-legal-tools-data clone
 directory under `docs/`. It will not commit the changes (`--nogit`) and will
@@ -535,7 +227,7 @@ not push any commits (`--nopush` is implied by `--nogit`).
     ```
 
 
-### Publishing changes to git repo
+#### Publishing Changes to Git Repo
 
 When the site is deployed, to enable pushing and pulling the licenses data repo
 with GitHub, create an SSH deploy key for the cc-legal-tools-data repo with
@@ -545,7 +237,7 @@ owner (0o400). Then in settings, make `TRANSLATION_REPOSITORY_DEPLOY_KEY` be
 the full path to that deploy key file.
 
 
-### Publishing Dependency Documentation
+#### Publishing Dependency Documentation
 
 - [Beautiful Soup Documentation — Beautiful Soup 4 documentation][bs4docs]
   - [lxml - Processing XML and HTML with Python][lxml]
@@ -554,6 +246,186 @@ the full path to that deploy key file.
 [bs4docs]: https://www.crummy.com/software/BeautifulSoup/bs4/doc/
 [gitpythondocs]: https://gitpython.readthedocs.io/en/stable/index.html
 [lxml]: https://lxml.de/
+
+
+### Machine/metadata Layer: RDF/XML
+
+For details and history, see [`docs/rdf.md`](docs/rdf.md).
+
+
+## Development
+
+Inside the Docker container, the Python-based tooling centers around by pre-commit and Django.
+
+See the [Code of Conduct](#code-of-conduct) above and the [Code of Conduct document][code_of_conduct] for more information on participant expectations and responsibilities.
+
+
+### Contributing
+
+See [`CONTRIBUTING.md`][org-contrib].
+
+[org-contrib]: https://github.com/creativecommons/.github/blob/main/CONTRIBUTING.md
+
+
+### Manual Setup
+
+> :warning: **This section may be helpful for maintaining the project, but
+> should _NOT_ be used for development. Please use the Docker Compose Setup,
+> above.**
+
+1. Complete Docker Compose Setup, above
+2. Development Environment
+   1. Install dependencies
+      - Linux:
+        ```shell
+        sudo apt-get install python3.11 python3.11-dev python3-pip
+        ```
+        ```shell
+        pip3 install pipenv
+        ```
+      - macOS: via [Homebrew](https://brew.sh/):
+        ```shell
+        brew install pipenv python@3.11
+        ```
+      - Windows: [install Python][python-windows] and then use `pip` to install
+        `pipenv`:
+        ```shell
+        pip install pipenv
+        ```
+   2. Install Python environment and modules via pipenv to create a
+      virtualenv
+      - Linux:
+        ```shell
+        pipenv install --dev --python /usr/bin/python3.11
+        ```
+      - macOS: via [Homebrew](https://brew.sh/):
+        ```shell
+        pipenv install --dev --python /usr/local/opt/python@3.11/libexec/bin/python
+        ```
+      - Windows:
+        ```shell
+        pipenv install --dev --python \User\Appdata\programs\python
+        ```
+   3. Install pre-commit hooks
+    ```shell
+    pipenv run pre-commit install
+    ```
+3. Run development server ([127.0.0.1:8005](http://127.0.0.1:8005/))
+    ```shell
+    pipenv run ./manage.py runserver
+    ```
+   - Any changes made to Python will be detected and rebuilt transparently as
+     long as the development server is running.
+
+[python-windows]:https://www.pythontutorial.net/getting-started/install-python/
+
+
+### Software Versions
+
+These are the currently designated versions of the various dependencies:
+- [Python 3.11][python311] specified in:
+  - [`.github/workflows/django-app-coverage.yml`][django-app-coverage]
+  - [`.github/workflows/static-analysis.yml`][static-analysis]
+  - [`.pre-commit-config.yaml`](.pre-commit-config.yaml)
+  - [`Dockerfile`](Dockerfile)
+  - [`Pipfile`](Pipfile)
+  - [`pyproject.toml`](pyproject.toml)
+- [Django 4.2 (LTS)][django42]
+  - [`Pipfile`](Pipfile)
+
+[django-app-coverage]: .github/workflows/django-app-coverage.yml
+[static-analysis]: .github/workflows/static-analysis.yml
+[python311]: https://docs.python.org/3.11/
+[django42]: https://docs.djangoproject.com/en/4.2/
+
+
+### Developer Resources
+
+These resources are available for developing this tooling:
+- **[Python Guidelines — Creative Commons Open Source][ccospyguide]**
+- [Black][black]: the uncompromising Python code formatter
+- [Coverage.py][coveragepy]: Code coverage measurement for Python
+- Docker
+  - [Dockerfile reference | Docker Documentation][dockerfile]
+  - [Compose file version 3 reference | Docker Documentation][compose3]
+- [flake8][flake8]: a python tool that glues together pep8, pyflakes, mccabe,
+  and third-party plugins to check the style and quality of some python code.
+- [isort][isort]: A Python utility / library to sort imports.
+- [pre-commit][precommit]: A framework for managing and maintaining
+  multi-language pre-commit hooks.
+
+[ccospyguide]: https://opensource.creativecommons.org/contributing-code/python-guidelines/
+[black]: https://github.com/psf/black
+[coveragepy]: https://github.com/nedbat/coveragepy
+[dockerfile]: https://docs.docker.com/engine/reference/builder/
+[compose3]: https://docs.docker.com/compose/compose-file/compose-file-v3/
+[flake8]: https://gitlab.com/pycqa/flake8
+[isort]: https://pycqa.github.io/isort/
+[precommit]: https://pre-commit.com/
+
+
+> :information_source: The rest of the documentation assumes Docker. If you are
+> using a manual setup, use `pipenv run` instead of `docker compose exec app`
+> for the commands below.
+
+
+### Helper Scripts
+
+Best run before every commit:
+- `./dev/coverage.sh` - Run coverage tests and report
+- `./dev/tools.sh` - Run Python code tools (isort, black, flake8)
+
+Run as needed:
+- `./dev/copy_theme.sh` - Copy the portions of
+  [creativecommons/vocabulary-theme][vocab-theme] needed for local development
+  - Run after each new release of
+    [creativecommons/vocabulary-theme][vocab-theme]
+
+Data management:
+- `./dev/dump_data.sh` - Dump Django application data
+- `./dev/init_data.sh` - :warning: Initialize Django application data
+- `./dev/load_data.sh` - Load Django application data
+
+Esoteric and dangerous:
+- `./dev/updatemessages.sh` - :warning: Run Django Management
+  nofuzzy_makemessages with helpful options (including excluding legalcode) and
+  compilemessages
+
+[vocab-theme]: https://github.com/creativecommons/vocabulary-theme
+
+
+### Coverage Tests and Report
+
+The coverage tests and report are run as part of pre-commit and as a GitHub
+Action. To run it manually:
+1. Ensure the [Data Repository](#data-repository), above, is in place
+2. Ensure [Docker Compose Setup](#docker-compose-setup), above, is complete
+2. Coverage test
+    ```shell
+    docker compose exec app coverage run manage.py test --noinput --keepdb
+    ```
+3. Coverage report
+    ```shell
+    docker compose exec app coverage report
+    ```
+
+
+### Commit Errors
+
+
+#### Error Building Trees
+
+If you encounter an `error: Error building trees` error from pre-commit when
+you commit, try adding your files (`git add <FILES>`) before committing them.
+
+
+## Frontend Dependencies
+
+The following CC projects are used to achieve a consistent look and feel:
+- [creativecommons/vocabulary-theme][vocabulary-theme]: WordPress Theme
+  implementation of the Vocabulary design system
+
+[vocabulary-theme]: https://github.com/creativecommons/vocabulary-theme
 
 
 ## Licenses
@@ -580,7 +452,7 @@ Dedication][cc-zero].
 [cc-zero]: https://creativecommons.org/publicdomain/zero/1.0/
 
 
-### vocabulary-theme
+### Vocabulary Theme
 
 [![CC0 1.0 Universal (CC0 1.0) Public Domain Dedication
 button][cc-zero-png]][cc-zero]

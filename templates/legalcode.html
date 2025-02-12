@@ -3,7 +3,7 @@
 
 
 {% block title %}
-{{ tool.identifier }} {% trans "Legal Code" %} | {{ tool_title }}
+{% trans "Legal Code" %} - {{ tool_title }}
 {% endblock %}
 
 
@@ -24,13 +24,12 @@
 
 
 {% block content %}
-
 <div class="tool-meta">
 
 <div class="meta-box">
 <article class="canonical-url">
 <h2>{% trans "Canonical URL" %}</h2>
-<a href="{{ canonical_url_cc}}">{{ canonical_url_cc }}</a>
+<a {% if lang.bidi %}dir="ltr"{% endif %} href="{{ canonical_url_cc}}">{{ canonical_url_cc }}</a>
 </article>
 
 <article class="formats">
@@ -90,46 +89,13 @@ the date of change
 {% endif %}
 {% include 'includes/notice_about_cc_and_trademark.html' %}
 {% include 'includes/related_links.html' %}
+
+{# These four strings were removed from UX. Maintaining here to preserve #}
+{# translations until new UX is decided. #}
+{% trans "Hide Considerations for Licensors" as _ %}
+{% trans "Show Considerations for Licensors" as _ %}
+{% trans "Hide Considerations for the Public" as _ %}
+{% trans "Show Considerations for the Public" as _ %}
 {% endblock %}
 
-{% block extra-js%}
-  <script>
-    /*
-      Show/Hide Functionality for expand/collapse sections in use_of_licenses.html
-    */
-    let arrowArray = Array.from(document.getElementsByClassName("angle-down"))
-    arrowArray.forEach(function(arrow) {
-      arrow.addEventListener("click", handleArrowClicked);
-    });
-
-    function handleArrowClicked() {
-      // Toggle consideration section's screen reader announcement text (inside of icon)
-      if (this.dataset.consideration === "1" && this.dataset.direction === "down") {
-        this.firstChild.innerHTML = "{% trans "Hide Considerations for Licensors" %}"
-      } else if (this.dataset.consideration !== "1" && this.dataset.direction === "down") {
-        this.firstChild.innerHTML = "{% trans "Hide Considerations for the Public" %}"
-      } else if (this.dataset.consideration === "1" && this.dataset.direction === "up") {
-        this.firstChild.innerHTML = "{% trans "Show Considerations for Licensors" %}"
-      } else {
-        this.firstChild.innerHTML = "{% trans "Show Considerations for the Public" %}"
-      }
-      // Toggle icon between up and down
-      if (this.dataset.direction === "down") {
-        // toggle icon to up arrow icon
-        this.classList.remove("angle-down")
-        this.classList.add("angle-up")
-        this.dataset.direction = "up"
-        // show <p> tag
-        this.parentNode.parentNode.nextSibling.nextSibling.classList.remove("is-hidden");
-      } else {
-        // toggle icon to up arrow icon
-        this.classList.add("angle-down")
-        this.classList.remove("angle-up")
-        this.dataset.direction = "down"
-        // hide <p> tag
-        this.parentNode.parentNode.nextSibling.nextSibling.classList.add("is-hidden");
-      }
-    };
-  </script>
-{% endblock %}
 {# vim: ft=jinja.html ts=2 sw=2 sts=2 sr et #}

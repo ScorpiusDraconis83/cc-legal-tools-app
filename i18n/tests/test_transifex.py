@@ -127,29 +127,30 @@ class TestTransifex(TestCase):
             ]
         )
 
-        i18n_format_xa = mock.Mock(id="XA")
-        i18n_format_xa.__str__ = mock.Mock(return_value=i18n_format_xa.id)
-        i18n_format_xb = mock.Mock(id="XB")
-        i18n_format_xb.__str__ = mock.Mock(return_value=i18n_format_xb.id)
-        i18n_format_po = mock.Mock(id="PO")
-        i18n_format_po.__str__ = mock.Mock(return_value=i18n_format_po.id)
-        i18n_format_xc = mock.Mock(id="XC")
-        i18n_format_xc.__str__ = mock.Mock(return_value=i18n_format_xc.id)
+        return_value = []
+        hundred = range(0, 100)
+        for i in hundred:
+            i18n_format = mock.Mock(id=f"X{i:03}")
+            i18n_format.__str__ = mock.Mock(return_value=i18n_format.id)
+            return_value.append(i18n_format)
+        i18n_format = mock.Mock(id="PO")
+        i18n_format.__str__ = mock.Mock(return_value=i18n_format.id)
+        return_value.append(i18n_format)
+        hundred = range(100, 200)
+        for i in hundred:
+            i18n_format = mock.Mock(id=f"X{i:4}")
+            i18n_format.__str__ = mock.Mock(return_value=i18n_format.id)
+            return_value.append(i18n_format)
+
         with mock.patch("i18n.transifex.transifex_api") as api:
             api.Organization.get = mock.Mock(return_value=organization)
-            api.I18nFormat.filter = mock.Mock(
-                return_value=[
-                    i18n_format_po,
-                    i18n_format_xa,
-                    i18n_format_xb,
-                    i18n_format_xc,
-                ]
-            )
+            api.I18nFormat.filter = mock.Mock(return_value=return_value)
             self.helper = TransifexHelper(dryrun=False)
 
         api.Organization.get.assert_called_once()
         organization.fetch.assert_called_once()
         api.I18nFormat.filter.assert_called_once()
+        self.assertEquals(self.helper.api_i18n_format.id, "PO")
 
     def test__empty_branch_object(self):
         empty = _empty_branch_object()
@@ -1461,6 +1462,74 @@ class TestTransifex(TestCase):
         self.helper.clear_transifex_stats.assert_called()
         mock_pofile_save.assert_called_once()
 
+    def test_safesync_translation_with_mismatched_changes(self):
+        api = self.helper.api
+        language_code = "x_lang_code_x"
+        transifex_code = "x_trans_code_x"
+        resource_slug = "x_slug_x"
+        pofile_path = "x_path_x"
+        pofile_obj = polib.pofile(pofile=POFILE_CONTENT)
+        language = mock.Mock(
+            id=f"l:{transifex_code}",
+        )
+        api.Language.get = mock.Mock(return_value=language)
+        resource = mock.Mock(
+            id=f"o:{TEST_ORG_SLUG}:p:{TEST_PROJ_SLUG}:r:{resource_slug}",
+            attributes={"i18n_type": "PO"},
+        )
+        api.Resource.get = mock.Mock(return_value=resource)
+        translations = [
+            mock.Mock(
+                resource_string=mock.Mock(
+                    strings={"other": pofile_obj[0].msgid}
+                ),
+                strings={
+                    "other": pofile_obj[0].msgstr.replace(
+                        "Attribution", "XXXXXXXXXXX"
+                    ),
+                },
+                save=mock.Mock(),
+            ),
+            mock.Mock(
+                resource_string=mock.Mock(
+                    strings={"other": pofile_obj[1].msgid}
+                ),
+                strings={"other": pofile_obj[1].msgstr},
+                save=mock.Mock(),
+            ),
+        ]
+        api.ResourceTranslation.filter = mock.Mock(
+            return_value=mock.Mock(
+                include=mock.Mock(
+                    return_value=mock.Mock(
+                        all=mock.Mock(return_value=translations)
+                    ),
+                ),
+            ),
+        )
+        self.helper.clear_transifex_stats = mock.Mock()
+        pofile_obj[0].msgstr = pofile_obj[0].msgstr.replace(
+            "Attribution", "YYYYYYYYYYY"
+        )
+
+        with mock.patch.object(polib.POFile, "save") as mock_pofile_save:
+            pofile_obj_new = self.helper.safesync_translation(
+                resource_slug,
+                transifex_code,
+                language_code,
+                pofile_path,
+                pofile_obj,
+            )
+
+        self.assertEqual(
+            pofile_obj_new[0].msgstr,
+            "YYYYYYYYYYY-NoDerivatives 4.0 International",
+        )
+        translations[0].save.assert_not_called()
+        translations[1].save.assert_not_called()
+        self.helper.clear_transifex_stats.assert_not_called()
+        mock_pofile_save.assert_not_called()
+
     def test_safesync_translation_with_both_changes_dryrun(self):
         api = self.helper.api
         self.helper.dryrun = True
@@ -2167,6 +2236,53 @@ class TestTransifex(TestCase):
         api.Resource.get.assert_not_called()
         api.ResourceTranslationsAsyncUpload.upload.assert_not_called()
 
+    def test_upload_translation_to_transifex_resource_present_forced(self):
+        api = self.helper.api
+        resource_slug = "x_slug_x"
+        language_code = "x_lang_code_x"
+        transifex_code = "x_trans_code_x"
+        pofile_path = "x_path_x"
+        pofile_obj = polib.pofile(pofile=POFILE_CONTENT)
+        push_overwrite = True
+        pofile_content = get_pofile_content(pofile_obj)
+        self.helper._resource_stats = {resource_slug: {}}
+        self.helper._translation_stats = {
+            resource_slug: {transifex_code: {"translated_strings": 99}}
+        }
+        language = mock.Mock(
+            id=f"l:{transifex_code}",
+        )
+        self.helper.api.Language.get = mock.Mock(return_value=language)
+        resource = mock.Mock(
+            id=f"o:{TEST_ORG_SLUG}:p:{TEST_PROJ_SLUG}:r:{resource_slug}",
+            attributes={"i18n_type": "PO"},
+        )
+        self.helper.api.Resource.get = mock.Mock(return_value=resource)
+        api.ResourceTranslationsAsyncUpload.upload.return_value = {
+            "translations_created": 1,
+            "translations_updated": 1,
+        }
+        self.helper.clear_transifex_stats = mock.Mock()
+
+        self.helper.upload_translation_to_transifex_resource(
+            resource_slug,
+            language_code,
+            transifex_code,
+            pofile_path,
+            pofile_obj,
+            push_overwrite,
+        )
+
+        api.Language.get.assert_called_once()
+        api.Resource.get.assert_called_once()
+        api.ResourceTranslationsAsyncUpload.upload.assert_called_once()
+        api.ResourceTranslationsAsyncUpload.upload.assert_called_with(
+            resource=resource,
+            content=pofile_content,
+            language=language.id,
+        )
+        self.helper.clear_transifex_stats.assert_called_once()
+
     def test_upload_translation_to_transifex_resource_dryrun(self):
         api = self.helper.api
         self.helper.dryrun = True
@@ -2203,51 +2319,6 @@ class TestTransifex(TestCase):
         pofile_content = get_pofile_content(pofile_obj)
         self.helper._resource_stats = {resource_slug: {}}
         self.helper._translation_stats = {resource_slug: {}}
-        language = mock.Mock(
-            id=f"l:{transifex_code}",
-        )
-        self.helper.api.Language.get = mock.Mock(return_value=language)
-        resource = mock.Mock(
-            id=f"o:{TEST_ORG_SLUG}:p:{TEST_PROJ_SLUG}:r:{resource_slug}",
-            attributes={"i18n_type": "PO"},
-        )
-        self.helper.api.Resource.get = mock.Mock(return_value=resource)
-        api.ResourceTranslationsAsyncUpload.upload.return_value = {
-            "translations_created": 1,
-            "translations_updated": 1,
-        }
-        self.helper.clear_transifex_stats = mock.Mock()
-
-        self.helper.upload_translation_to_transifex_resource(
-            resource_slug,
-            language_code,
-            transifex_code,
-            pofile_path,
-            pofile_obj,
-            push_overwrite,
-        )
-
-        api.Language.get.assert_called_once()
-        api.Resource.get.assert_called_once()
-        api.ResourceTranslationsAsyncUpload.upload.assert_called_once()
-        api.ResourceTranslationsAsyncUpload.upload.assert_called_with(
-            resource=resource,
-            content=pofile_content,
-            language=language.id,
-        )
-        self.helper.clear_transifex_stats.assert_called_once()
-
-    def test_upload_translation_to_transifex_resource_push(self):
-        api = self.helper.api
-        resource_slug = "x_slug_x"
-        language_code = "x_lang_code_x"
-        transifex_code = "x_trans_code_x"
-        pofile_path = "x_path_x"
-        pofile_obj = polib.pofile(pofile=POFILE_CONTENT)
-        push_overwrite = True
-        pofile_content = get_pofile_content(pofile_obj)
-        self.helper._resource_stats = {}
-        self.helper._translation_stats = {}
         language = mock.Mock(
             id=f"l:{transifex_code}",
         )
@@ -2328,6 +2399,37 @@ class TestTransifex(TestCase):
         )
         self.assertTrue(log_context.output[2].startswith("CRITICAL:"))
         self.assertIn("Translation upload failed", log_context.output[2])
+        self.helper.clear_transifex_stats.assert_not_called()
+
+    def test_upload_translation_to_transifex_resource_local_empty(self):
+        api = self.helper.api
+        resource_slug = "x_slug_x"
+        language_code = "x_lang_code_x"
+        transifex_code = "x_trans_code_x"
+        pofile_path = "x_path_x"
+        pofile_obj = polib.pofile(pofile=POFILE_CONTENT)
+        for entry in pofile_obj:
+            entry.msgstr = ""
+        push_overwrite = False
+        self.helper._resource_stats = {resource_slug: None}
+        self.helper._translation_stats = {resource_slug: {}}
+        self.helper.clear_transifex_stats = mock.Mock()
+
+        with self.assertLogs(self.helper.log, level="DEBUG") as log_context:
+            self.helper.upload_translation_to_transifex_resource(
+                resource_slug,
+                language_code,
+                transifex_code,
+                pofile_path,
+                pofile_obj,
+                push_overwrite,
+            )
+
+        api.Language.get.assert_not_called()
+        api.Resource.get.assert_not_called()
+        api.ResourceTranslationsAsyncUpload.upload.assert_not_called()
+        self.assertTrue(log_context.output[0].startswith("DEBUG:"))
+        self.assertIn("Skipping upload of 0% complete", log_context.output[0])
         self.helper.clear_transifex_stats.assert_not_called()
 
     # Test: normalize_pofile_language ########################################
@@ -2602,6 +2704,94 @@ class TestTransifex(TestCase):
 
         mock_pofile_save.assert_called()
         self.assertNotIn("Last-Translator", new_pofile_obj.metadata)
+
+    # Test: normalize_pofile_percent_translated ##############################
+
+    def test_normalize_pofile_percent_translated_resource_language(self):
+        transifex_code = settings.LANGUAGE_CODE
+        resource_slug = "x_slug_x"
+        resource_name = "x_name_x"
+        pofile_path = "x_path_x"
+        pofile_obj = polib.pofile(pofile=POFILE_CONTENT)
+        pofile_obj.metadata["Percent-Translated"] = (
+            pofile_obj.percent_translated()
+        )
+
+        with mock.patch.object(polib.POFile, "save") as mock_pofile_save:
+            self.helper.normalize_pofile_percent_translated(
+                transifex_code,
+                resource_slug,
+                resource_name,
+                pofile_path,
+                pofile_obj,
+            )
+
+        mock_pofile_save.assert_not_called()
+
+    def test_normalize_pofile_percent_translated_correct(self):
+        transifex_code = "x_trans_code_x"
+        resource_slug = "x_slug_x"
+        resource_name = "x_name_x"
+        pofile_path = "x_path_x"
+        pofile_obj = polib.pofile(pofile=POFILE_CONTENT)
+        pofile_obj.metadata["Percent-Translated"] = (
+            pofile_obj.percent_translated()
+        )
+
+        with mock.patch.object(polib.POFile, "save") as mock_pofile_save:
+            self.helper.normalize_pofile_percent_translated(
+                transifex_code,
+                resource_slug,
+                resource_name,
+                pofile_path,
+                pofile_obj,
+            )
+
+        mock_pofile_save.assert_not_called()
+
+    def test_normalize_pofile_percent_translated_dryrun(self):
+        self.helper.dryrun = True
+        transifex_code = "x_trans_code_x"
+        resource_slug = "x_slug_x"
+        resource_name = "x_name_x"
+        pofile_path = "x_path_x"
+        pofile_obj = polib.pofile(pofile=POFILE_CONTENT)
+        pofile_obj.metadata["Percent-Translated"] = 37
+
+        with mock.patch.object(polib.POFile, "save") as mock_pofile_save:
+            self.helper.normalize_pofile_percent_translated(
+                transifex_code,
+                resource_slug,
+                resource_name,
+                pofile_path,
+                pofile_obj,
+            )
+
+        mock_pofile_save.assert_not_called()
+
+    def test_normalize_pofile_percent_translated_incorrect(self):
+        transifex_code = "x_trans_code_x"
+        resource_slug = "x_slug_x"
+        resource_name = "x_name_x"
+        pofile_path = "x_path_x"
+        pofile_obj = polib.pofile(pofile=POFILE_CONTENT)
+        pofile_obj.metadata["Percent-Translated"] = 37
+
+        with mock.patch.object(polib.POFile, "save") as mock_pofile_save:
+            new_pofile_obj = self.helper.normalize_pofile_percent_translated(
+                transifex_code,
+                resource_slug,
+                resource_name,
+                pofile_path,
+                pofile_obj,
+            )
+
+        mock_pofile_save.assert_called()
+        self.assertIn("Percent-Translated", new_pofile_obj.metadata)
+        self.assertEqual(
+            new_pofile_obj.percent_translated(),
+            new_pofile_obj.metadata["Percent-Translated"],
+        )
 
     # Test: normalize_pofile_project_id ######################################
 

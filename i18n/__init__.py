@@ -191,6 +191,8 @@ JURISDICTION_NAMES = {
     "za": gettext_lazy("South Africa"),
 }
 UNIT_NAMES = {
+    # 4.0 licenses use "NoDerivatives" instead of "NoDerivs". When appropriate,
+    # the following values are updated by legal_tools.views.get_tool_title()
     "by": gettext_lazy("Attribution"),
     "by-nc": gettext_lazy("Attribution-NonCommercial"),
     "by-nc-nd": gettext_lazy("Attribution-NonCommercial-NoDerivs"),
@@ -221,7 +223,7 @@ LANGMAP_DJANGO_TO_PCRE = {
     # Django language codes are lowercase IETF language tags
     #
     # The following PCREs handle altnate codes and characters. Alternate case
-    # should be handled by an Apache RewriteMap.
+    # should be handled by an Apache configuraiton generated during publishing.
     "de-at": ["de[@_]at"],
     "en": ["en[@_-]gb", "en[@_-]us"],
     "en-ca": ["en[@_]ca"],

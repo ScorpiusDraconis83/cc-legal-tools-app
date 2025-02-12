@@ -4,12 +4,14 @@ from unittest import mock
 
 # Third-party
 from django.conf import settings
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.translation.trans_real import DjangoTranslation
 
 # First-party/Local
+from i18n.utils import get_default_language_for_jurisdiction_deed
 from legal_tools.models import UNITS_LICENSES, LegalCode, Tool, build_path
 from legal_tools.rdf_utils import (
     convert_https_to_http,
@@ -25,6 +27,7 @@ from legal_tools.views import (
     branch_status_helper,
     get_category_and_category_title,
     get_deed_rel_path,
+    get_legal_code_replaced_rel_path,
     normalize_path_and_lang,
     render_redirect,
 )
@@ -240,6 +243,26 @@ class ToolsTestsMixin:
             LegalCodeFactory(tool=tool, language_code="es")
             LegalCodeFactory(tool=tool, language_code="fr")
 
+        self.by_30_es = ToolFactory(
+            base_url="https://creativecommons.org/licenses/by/3.0/es/",
+            category="licenses",
+            unit="by",
+            version="3.0",
+            jurisdiction_code="es",
+            is_replaced_by=self.by_40,
+            permits_derivative_works=True,
+            permits_reproduction=True,
+            permits_distribution=True,
+            permits_sharing=True,
+            requires_share_alike=False,
+            requires_notice=True,
+            requires_attribution=True,
+            prohibits_commercial_use=False,
+            prohibits_high_income_nation_use=False,
+        )
+        # global default language
+        LegalCodeFactory(tool=self.by_30_es, language_code="en")
+
         self.by_sa_30_es = ToolFactory(
             base_url="https://creativecommons.org/licenses/by-sa/3.0/es/",
             category="licenses",
@@ -257,9 +280,8 @@ class ToolsTestsMixin:
             prohibits_commercial_use=False,
             prohibits_high_income_nation_use=False,
         )
-        LegalCodeFactory(  # Jurisdiction default language
-            tool=self.by_sa_30_es, language_code="es"
-        )
+        # Jurisdiction default language
+        LegalCodeFactory(tool=self.by_sa_30_es, language_code="es")
         LegalCodeFactory(tool=self.by_sa_30_es, language_code="ca")
 
         self.by_sa_30_igo = ToolFactory(
@@ -279,9 +301,8 @@ class ToolsTestsMixin:
             prohibits_commercial_use=False,
             prohibits_high_income_nation_use=False,
         )
-        LegalCodeFactory(  # Jurisdiction default language
-            tool=self.by_sa_30_igo, language_code="en"
-        )
+        # Jurisdiction default language
+        LegalCodeFactory(tool=self.by_sa_30_igo, language_code="en")
         LegalCodeFactory(tool=self.by_sa_30_igo, language_code="fr")
 
         self.by_30_th = ToolFactory(
@@ -301,9 +322,8 @@ class ToolsTestsMixin:
             prohibits_commercial_use=False,
             prohibits_high_income_nation_use=False,
         )
-        LegalCodeFactory(  # Jurisdiction default language
-            tool=self.by_30_th, language_code="th"
-        )
+        # Jurisdiction default language
+        LegalCodeFactory(tool=self.by_30_th, language_code="th")
 
         self.by_sa_20_es = ToolFactory(
             base_url="https://creativecommons.org/licenses/by-sa/2.0/es/",
@@ -322,9 +342,8 @@ class ToolsTestsMixin:
             prohibits_commercial_use=False,
             prohibits_high_income_nation_use=False,
         )
-        LegalCodeFactory(  # Jurisdiction default language
-            tool=self.by_sa_20_es, language_code="es"
-        )
+        # Jurisdiction default language
+        LegalCodeFactory(tool=self.by_sa_20_es, language_code="es")
 
         self.devnations = ToolFactory(
             base_url="https://creativecommons.org/licenses/devnations/2.0/",
@@ -371,6 +390,104 @@ class ToolsTestsMixin:
         self.by_sa_20_es.save()
 
         super().setUp()
+
+
+class ViewHelperFunctionsTest(ToolsTestsMixin, TestCase):
+    def test_get_category_and_category_title_category_tool(self):
+        category, category_title = get_category_and_category_title(
+            category=None,
+            tool=None,
+        )
+        self.assertEqual(category, "licenses")
+        self.assertEqual(category_title, "Licenses")
+
+        tool = Tool.objects.get(unit="by", version="4.0")
+        category, category_title = get_category_and_category_title(
+            category=None,
+            tool=tool,
+        )
+        self.assertEqual(category, "licenses")
+        self.assertEqual(category_title, "Licenses")
+
+    def test_get_category_and_category_title_category_publicdomain(self):
+        category, category_title = get_category_and_category_title(
+            category="publicdomain",
+            tool=None,
+        )
+        self.assertEqual(category, "publicdomain")
+        self.assertEqual(category_title, "Public Domain")
+
+    @override_settings(LANGUAGES_MOSTLY_TRANSLATED=["x1", "x2"])
+    def test_get_deed_rel_path_mostly_translated_language_code(self):
+        expected_deed_rel_path = "deed.x1"
+        deed_rel_path = get_deed_rel_path(
+            deed_url="/deed.x1",
+            path_start="/",
+            language_code="x1",
+            language_default="x2",
+        )
+        self.assertEqual(expected_deed_rel_path, deed_rel_path)
+
+    @override_settings(LANGUAGES_MOSTLY_TRANSLATED=["x1", "x2"])
+    def test_get_deed_rel_path_less_translated_language_code(self):
+        expected_deed_rel_path = "deed.x2"
+        deed_rel_path = get_deed_rel_path(
+            deed_url="/deed.x3",
+            path_start="/",
+            language_code="x3",
+            language_default="x2",
+        )
+        self.assertEqual(expected_deed_rel_path, deed_rel_path)
+
+    @override_settings(
+        LANGUAGE_CODE="x1",
+        LANGUAGES_MOSTLY_TRANSLATED=[],
+    )
+    def test_get_deed_rel_path_less_translated_language_default(self):
+        expected_deed_rel_path = "deed.x1"
+        deed_rel_path = get_deed_rel_path(
+            deed_url="/deed.x3",
+            path_start="/",
+            language_code="x3",
+            language_default="x2",
+        )
+        self.assertEqual(expected_deed_rel_path, deed_rel_path)
+
+    def test_get_legal_code_replaced_rel_path_cache_miss(self):
+        tool = Tool.objects.get(
+            unit="by",
+            version="3.0",
+            jurisdiction_code="",
+        )
+        path_start = "/licenses/by/3.0"
+        language_code = "en"
+        language_default = get_default_language_for_jurisdiction_deed(None)
+
+        cache.clear()
+        self.assertFalse(cache.has_key("by-4.0--en-replaced_deed_str"))
+        self.assertFalse(cache.has_key("by-4.0--en-replaced_legal_code_title"))
+        _, _, _, _ = get_legal_code_replaced_rel_path(
+            tool.is_replaced_by, path_start, language_code, language_default
+        )
+        self.assertEqual(
+            cache.get("by-4.0--en-replaced_deed_title"),
+            "Deed - Attribution 4.0 International",
+        )
+        self.assertEqual(
+            cache.get("by-4.0--en-replaced_legal_code_title"),
+            "Legal Code - Attribution 4.0 International",
+        )
+
+    def test_normalize_path_and_lang(self):
+        request_path = "/licenses/by/3.0/de/legalcode"
+        jurisdiction = "de"
+        norm_request_path, norm_language_code = normalize_path_and_lang(
+            request_path,
+            jurisdiction,
+            language_code=None,
+        )
+        self.assertEqual(norm_request_path, f"{request_path}.de")
+        self.assertEqual(norm_language_code, "de")
 
 
 class ViewDevHomeTest(ToolsTestsMixin, TestCase):
@@ -495,6 +612,39 @@ class DeedViewViewTest(ToolsTestsMixin, TestCase):
             tool.category,
             tool.unit,
             tool.version,
+            f"deed.{language_code}",
+        )
+        rsp = self.client.get(url)
+        text = rsp.content.decode("utf-8")
+        self.assertEqual(f"{rsp.status_code} {url}", f"200 {url}")
+        if (
+            "INVALID_VARIABLE" in text
+        ):  # Some unresolved variable in the template
+            msgs = ["INVALID_VARIABLE in output"]
+            for line in text.splitlines():
+                if "INVALID_VARIABLE" in line:
+                    msgs.append(line)
+            self.fail("\n".join(msgs))
+        self.assertContains(rsp, "Atribución")
+        self.assertContains(rsp, "Sen restricións adicionais")
+        self.assertContains(rsp, "Notas")
+
+    def test_deed_translation_by_30_es_gl(self):
+        # Test with valid Deed & UX and *invalid* Legal Code translations
+        # (with no jurisdiction default language legal code, but with
+        #  global default lanage legal code)
+        language_code = "gl"
+        tool = Tool.objects.get(
+            unit="by",
+            version="3.0",
+            jurisdiction_code="es",
+        )
+        url = os.path.join(
+            "/",
+            tool.category,
+            tool.unit,
+            tool.version,
+            tool.jurisdiction_code,
             f"deed.{language_code}",
         )
         rsp = self.client.get(url)
@@ -736,81 +886,6 @@ class ViewLegalCodeTest(TestCase):
     #        context = rsp.context
     #        self.assertContains(rsp, 'lang="de"')
     #        self.assertEqual(lc, context["legal_code"])
-
-    def test_get_category_and_category_title_category_tool(self):
-        category, category_title = get_category_and_category_title(
-            category=None,
-            tool=None,
-        )
-        self.assertEqual(category, "licenses")
-        self.assertEqual(category_title, "Licenses")
-
-        tool = ToolFactory(
-            category="licenses",
-            base_url="https://creativecommons.org/licenses/by/4.0/",
-            version="4.0",
-        )
-        category, category_title = get_category_and_category_title(
-            category=None,
-            tool=tool,
-        )
-        self.assertEqual(category, "licenses")
-        self.assertEqual(category_title, "Licenses")
-
-    def test_get_category_and_category_title_category_publicdomain(self):
-        category, category_title = get_category_and_category_title(
-            category="publicdomain",
-            tool=None,
-        )
-        self.assertEqual(category, "publicdomain")
-        self.assertEqual(category_title, "Public Domain")
-
-    def test_normalize_path_and_lang(self):
-        request_path = "/licenses/by/3.0/de/legalcode"
-        jurisdiction = "de"
-        norm_request_path, norm_language_code = normalize_path_and_lang(
-            request_path,
-            jurisdiction,
-            language_code=None,
-        )
-        self.assertEqual(norm_request_path, f"{request_path}.de")
-        self.assertEqual(norm_language_code, "de")
-
-    @override_settings(LANGUAGES_MOSTLY_TRANSLATED=["x1", "x2"])
-    def test_get_deed_rel_path_mostly_translated_language_code(self):
-        expected_deed_rel_path = "deed.x1"
-        deed_rel_path = get_deed_rel_path(
-            deed_url="/deed.x1",
-            path_start="/",
-            language_code="x1",
-            language_default="x2",
-        )
-        self.assertEqual(expected_deed_rel_path, deed_rel_path)
-
-    @override_settings(LANGUAGES_MOSTLY_TRANSLATED=["x1", "x2"])
-    def test_get_deed_rel_path_less_translated_language_code(self):
-        expected_deed_rel_path = "deed.x2"
-        deed_rel_path = get_deed_rel_path(
-            deed_url="/deed.x3",
-            path_start="/",
-            language_code="x3",
-            language_default="x2",
-        )
-        self.assertEqual(expected_deed_rel_path, deed_rel_path)
-
-    @override_settings(
-        LANGUAGE_CODE="x1",
-        LANGUAGES_MOSTLY_TRANSLATED=[],
-    )
-    def test_get_deed_rel_path_less_translated_language_default(self):
-        expected_deed_rel_path = "deed.x1"
-        deed_rel_path = get_deed_rel_path(
-            deed_url="/deed.x3",
-            path_start="/",
-            language_code="x3",
-            language_default="x2",
-        )
-        self.assertEqual(expected_deed_rel_path, deed_rel_path)
 
     def test_view_legal_code_identifying_jurisdiction_default_language(self):
         language_code = "de"
@@ -1054,32 +1129,33 @@ class ViewBranchStatusTest(TestCase):
             language_code="fr",
         )
 
-    def test_simple_branch(self):
-        url = reverse(
-            "branch_status", kwargs=dict(id=self.translation_branch.id)
-        )
-        with mock.patch("legal_tools.views.git"):
-            with mock.patch.object(LegalCode, "get_pofile"):
-                with mock.patch(
-                    "legal_tools.views.branch_status_helper"
-                ) as mock_helper:
-                    mock_helper.return_value = {
-                        "official_git_branch": settings.OFFICIAL_GIT_BRANCH,
-                        "branch": self.translation_branch,
-                        "commits": [],
-                        "last_commit": None,
-                    }
-                    r = self.client.get(url)
-                    # Call a second time to test cache and fully exercise
-                    # branch_status()
-                    self.client.get(url)
-        mock_helper.assert_called_with(mock.ANY, self.translation_branch)
-        self.assertTemplateUsed(r, "dev/branch_status.html")
-        context = r.context
-        self.assertEqual(self.translation_branch, context["branch"])
-        self.assertEqual(
-            settings.OFFICIAL_GIT_BRANCH, context["official_git_branch"]
-        )
+    # TODO: evalute when branch status is re-implemented
+    # def test_simple_branch(self):
+    #     url = reverse(
+    #         "branch_status", kwargs=dict(id=self.translation_branch.id)
+    #     )
+    #     with mock.patch("legal_tools.views.git"):
+    #         with mock.patch.object(LegalCode, "get_pofile"):
+    #             with mock.patch(
+    #                 "legal_tools.views.branch_status_helper"
+    #             ) as mock_helper:
+    #                 mock_helper.return_value = {
+    #                     "official_git_branch": settings.OFFICIAL_GIT_BRANCH,
+    #                     "branch": self.translation_branch,
+    #                     "commits": [],
+    #                     "last_commit": None,
+    #                 }
+    #                 r = self.client.get(url)
+    #                 # Call a second time to test cache and fully exercise
+    #                 # branch_status()
+    #                 self.client.get(url)
+    #     mock_helper.assert_called_with(mock.ANY, self.translation_branch)
+    #     self.assertTemplateUsed(r, "dev/branch_status.html")
+    #     context = r.context
+    #     self.assertEqual(self.translation_branch, context["branch"])
+    #     self.assertEqual(
+    #         settings.OFFICIAL_GIT_BRANCH, context["official_git_branch"]
+    #     )
 
     def test_branch_helper_local_branch_exists(self):
         mock_repo = mock.MagicMock()

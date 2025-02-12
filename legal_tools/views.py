@@ -5,23 +5,22 @@ from operator import itemgetter
 from typing import Iterable
 
 # Third-party
-import git
 import yaml
 from bs4 import BeautifulSoup
 from bs4.dammit import EntitySubstitution
 from bs4.formatter import HTMLFormatter
 from django.conf import settings
-from django.core.cache import caches
+from django.core.cache import cache
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.template.loader import render_to_string
 from django.utils import translation
 
 # First-party/Local
-from i18n import UNIT_NAMES
 from i18n.utils import (
     active_translation,
-    get_default_language_for_jurisdiction,
+    get_default_language_for_jurisdiction_deed,
+    get_default_language_for_jurisdiction_naive,
     get_jurisdiction_name,
     load_deeds_ux_translations,
     map_django_to_transifex_language_code,
@@ -37,6 +36,7 @@ from legal_tools.rdf_utils import (
     generate_legal_code_rdf,
     order_rdf_xml,
 )
+from legal_tools.utils import get_tool_title
 
 NUM_COMMITS = 3
 PLAIN_TEXT_TOOL_IDENTIFIERS = [
@@ -82,15 +82,6 @@ def get_category_and_category_title(category=None, tool=None):
     else:
         category_title = translation.gettext("Licenses")
     return category, category_title
-
-
-def get_tool_title(tool):
-    tool_name = UNIT_NAMES.get(tool.unit, "UNIMPLEMENTED")
-    jurisdiction_name = get_jurisdiction_name(
-        tool.category, tool.unit, tool.version, tool.jurisdiction_code
-    )
-    tool_title = f"{tool_name} {tool.version} {jurisdiction_name}"
-    return tool_title
 
 
 def get_languages_and_links_for_deeds_ux(request_path, selected_language_code):
@@ -201,34 +192,52 @@ def get_legal_code_replaced_rel_path(
     try:
         # Same language
         legal_code = LegalCode.objects.valid().get(
-            tool=tool,
-            language_code=language_code,
+            tool=tool, language_code=language_code
         )
     except LegalCode.DoesNotExist:
         try:
             # Jurisdiction default language
             legal_code = LegalCode.objects.valid().get(
-                tool=tool,
-                language_code=language_default,
+                tool=tool, language_code=language_default
             )
         except LegalCode.DoesNotExist:
             # Global default language
             legal_code = LegalCode.objects.valid().get(
-                tool=tool,
-                language_code=settings.LANGUAGE_CODE,
+                tool=tool, language_code=settings.LANGUAGE_CODE
             )
-    identifier = legal_code.tool.identifier()
-    lazy_deed = translation.gettext_lazy("Deed")
-    title = get_tool_title(legal_code.tool)
-    replaced_deed_title = f"{identifier} {lazy_deed} | {title}"
+    title = get_tool_title(
+        tool.unit,
+        tool.version,
+        tool.category,
+        tool.jurisdiction_code,
+        legal_code.language_code,
+    )
+    prefix = (
+        f"{tool.unit}-{tool.version}-"
+        f"{tool.jurisdiction_code}-{legal_code.language_code}-"
+    )
+    replaced_deed_title = cache.get(f"{prefix}replaced_deed_title", "")
+    if not replaced_deed_title:
+        with translation.override(legal_code.language_code):
+            deed_str = translation.gettext("Deed")
+        replaced_deed_title = f"{deed_str} - {title}"
+        cache.add(f"{prefix}replaced_deed_title", replaced_deed_title)
     replaced_deed_path = get_deed_rel_path(
         legal_code.deed_url,
         path_start,
         language_code,
         language_default,
     )
-    lazy_legal_code = translation.gettext_lazy("Legal Code")
-    replaced_legal_code_title = f"{identifier} {lazy_legal_code} | {title}"
+    replaced_legal_code_title = cache.get(
+        f"{prefix}replaced_legal_code_title", ""
+    )
+    if not replaced_legal_code_title:
+        with translation.override(legal_code.language_code):
+            legal_code_str = translation.gettext("Legal Code")
+        replaced_legal_code_title = f"{legal_code_str} - {title}"
+        cache.add(
+            f"{prefix}replaced_legal_code_title", replaced_legal_code_title
+        )
     replaced_legal_code_path = os.path.relpath(
         legal_code.legal_code_url, path_start
     )
@@ -248,9 +257,14 @@ def name_local(legal_code):
 
 def normalize_path_and_lang(request_path, jurisdiction, language_code):
     if not language_code:
-        language_code = get_default_language_for_jurisdiction(
-            jurisdiction, settings.LANGUAGE_CODE
-        )
+        if "legalcode" in request_path:
+            language_code = get_default_language_for_jurisdiction_naive(
+                jurisdiction
+            )
+        else:
+            language_code = get_default_language_for_jurisdiction_deed(
+                jurisdiction
+            )
     if not request_path.endswith(f".{language_code}"):
         request_path = f"{request_path}.{language_code}"
     return request_path, language_code
@@ -365,7 +379,9 @@ def view_list(request, category, language_code=None):
     )
     if language_code not in settings.LANGUAGES_MOSTLY_TRANSLATED:
         raise Http404(f"invalid language: {language_code}")
+
     translation.activate(language_code)
+
     list_licenses, list_publicdomain = get_list_paths(language_code, None)
     # Get the list of units and languages that occur among the tools
     # to let the template iterate over them as it likes.
@@ -387,7 +403,7 @@ def view_list(request, category, language_code=None):
         lc_unit = lc.tool.unit
         lc_version = lc.tool.version
         lc_identifier = lc.tool.identifier()
-        lc_language_default = get_default_language_for_jurisdiction(
+        lc_language_default = get_default_language_for_jurisdiction_naive(
             lc.tool.jurisdiction_code,
         )
         lc_lang_code = lc.language_code
@@ -454,7 +470,7 @@ def view_list(request, category, language_code=None):
             "category": category,
             "category_title": category_title,
             "category_list": category_list,
-            "language_default": get_default_language_for_jurisdiction(None),
+            "language_default": settings.LANGUAGE_CODE,
             "languages_and_links": languages_and_links,
             "list_licenses": list_licenses,
             "list_publicdomain": list_publicdomain,
@@ -485,38 +501,53 @@ def view_deed(
         return view_page_not_found(
             request, Http404(f"invalid language: {language_code}")
         )
-    translation.activate(language_code)
 
     path_start = os.path.dirname(request.path)
-    language_default = get_default_language_for_jurisdiction(jurisdiction)
-
-    list_licenses, list_publicdomain = get_list_paths(
-        language_code, language_default
-    )
+    language_default = get_default_language_for_jurisdiction_deed(jurisdiction)
 
     try:
         tool = Tool.objects.get(
             unit=unit, version=version, jurisdiction_code=jurisdiction
         )
     except Tool.DoesNotExist as e:
+        translation.activate(language_code)
         return view_page_not_found(request, e)
-    tool_title = get_tool_title(tool)
 
     try:
         # Try to load legal code with specified language
         legal_code = tool.get_legal_code_for_language_code(language_code)
     except LegalCode.DoesNotExist:
-        # Else load legal code with default language
-        legal_code = tool.get_legal_code_for_language_code(language_default)
+        try:
+            # Next, try to load legal code with default language for the
+            # jurisdiction
+            legal_code = tool.get_legal_code_for_language_code(
+                get_default_language_for_jurisdiction_naive(jurisdiction)
+            )
+        except LegalCode.DoesNotExist:
+            # Last, load legal code with global default language (English)
+            legal_code = tool.get_legal_code_for_language_code(
+                settings.LANGUAGE_CODE
+            )
+
+    tool_title = get_tool_title(
+        unit, version, category, jurisdiction, language_code
+    )
 
     legal_code_rel_path = os.path.relpath(
         legal_code.legal_code_url, path_start
+    )
+
+    translation.activate(language_code)
+
+    list_licenses, list_publicdomain = get_list_paths(
+        language_code, language_default
     )
 
     category, category_title = get_category_and_category_title(
         category,
         tool,
     )
+
     languages_and_links = get_languages_and_links_for_deeds_ux(
         request_path=request.path,
         selected_language_code=language_code,
@@ -588,7 +619,9 @@ def view_legal_code(
     request.path, language_code = normalize_path_and_lang(
         request.path, jurisdiction, language_code
     )
-    language_default = get_default_language_for_jurisdiction(jurisdiction)
+    language_default = get_default_language_for_jurisdiction_naive(
+        jurisdiction
+    )
 
     list_licenses, list_publicdomain = get_list_paths(
         language_code, language_default
@@ -621,7 +654,19 @@ def view_legal_code(
     else:
         translation.activate(settings.LANGUAGE_CODE)
     tool = legal_code.tool
-    tool_title = get_tool_title(tool)
+
+    # get_tool_title manipulates the translation domain and, therefore, MUST
+    # be called before we Activate Legal Code translation
+    tool_title = get_tool_title(
+        unit, version, category, jurisdiction, language_code
+    )
+    # get_legal_code_replaced_rel_path calls get_tool_title, see note above
+    _, _, replaced_title, replaced_path = get_legal_code_replaced_rel_path(
+        tool.is_replaced_by,
+        path_start,
+        language_code,
+        language_default,
+    )
 
     # Activate Legal Code translation
     current_translation = legal_code.get_translation_object()
@@ -639,13 +684,6 @@ def view_legal_code(
 
         deed_rel_path = get_deed_rel_path(
             legal_code.deed_url,
-            path_start,
-            language_code,
-            language_default,
-        )
-
-        _, _, replaced_title, replaced_path = get_legal_code_replaced_rel_path(
-            tool.is_replaced_by,
             path_start,
             language_code,
             language_default,
@@ -758,32 +796,34 @@ def branch_status_helper(repo, translation_branch):
     }
 
 
-# using cache_page seems to break django-distill (weird error about invalid
-# host "testserver"). Do our caching more directly.
-# @cache_page(timeout=5 * 60, cache="branchstatuscache")
-def view_branch_status(request, id):
-    translation_branch = get_object_or_404(TranslationBranch, id=id)
-    cache = caches["branchstatuscache"]
-    cachekey = (
-        f"{settings.DATA_REPOSITORY_DIR}-{translation_branch.branch_name}"
-    )
-    html_response = cache.get(cachekey)
-    if html_response is None:
-        with git.Repo(settings.DATA_REPOSITORY_DIR) as repo:
-            context = branch_status_helper(repo, translation_branch)
-            html_response = render(
-                request,
-                "dev/branch_status.html",
-                context,
-            )
-            html_response.content = bytes(
-                BeautifulSoup(
-                    html_response.content, features="lxml"
-                ).prettify(),
-                "utf-8",
-            )
-        cache.set(cachekey, html_response, 5 * 60)
-    return html_response
+# TODO: evalute when branch status is re-implemented
+# # using cache_page seems to break django-distill (weird error about invalid
+# # host "testserver"). Do our caching more directly.
+# # @cache_page(timeout=5 * 60, cache="branchstatuscache")
+def view_branch_status(request, id):  # pragma: no cover
+    # translation_branch = get_object_or_404(TranslationBranch, id=id)
+    # cache = caches["branchstatuscache"]
+    # cachekey = (
+    #     f"{settings.DATA_REPOSITORY_DIR}-{translation_branch.branch_name}"
+    # )
+    # html_response = cache.get(cachekey)
+    # if html_response is None:
+    #     with git.Repo(settings.DATA_REPOSITORY_DIR) as repo:
+    #         context = branch_status_helper(repo, translation_branch)
+    #         html_response = render(
+    #             request,
+    #             "dev/branch_status.html",
+    #             context,
+    #         )
+    #         html_response.content = bytes(
+    #             BeautifulSoup(
+    #                 html_response.content, features="lxml"
+    #             ).prettify(),
+    #             "utf-8",
+    #         )
+    #     cache.set(cachekey, html_response, 5 * 60)
+    # return html_response
+    pass
 
 
 def view_metadata(request):
